@@ -34,6 +34,11 @@ def get_stock_data(symbol, days=1825):
         df = ticker.history(start=start, end=end, interval='1d')
         if df.empty:
             return None, None
+
+        # Remove timezone from index (fixes the "Asia/Singapore" error)
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+            
         df = df[['Close']].copy()
         name = ticker.info.get('longName', symbol)
         return df, name
