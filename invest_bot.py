@@ -38,6 +38,7 @@ def get_stock_data(symbol, days=1825):
         name = ticker.info.get('longName', symbol)
         return df, name
     except Exception as e:
+        print(e)
         return None, None
 
 def calculate_sma(df):
