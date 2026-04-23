@@ -40,7 +40,7 @@ def get_stock_data(symbol, days=1825):
             df.index = df.index.tz_localize(None)
             
         df = df[['Close']].copy()
-        name = ticker.info.get('longName', symbol)
+        name = ticker.info.get('shortName', symbol)
         return df, name
     except Exception as e:
         print(e)
