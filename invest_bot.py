@@ -50,7 +50,21 @@ def calculate_sma(df):
     return df
 
 def get_summary_data(content):
-    # ... (Keep existing symbol parsing logic) ...
+    """Parses CSV content and returns structured data for reports."""
+    symbols = []
+    lines = content.splitlines()
+    for line in lines:
+        if not line.strip(): continue
+        parts = [p.strip() for p in line.split(',')]
+        if parts[0].lower() in ['symbol', 'ticker', 'symbols']: continue
+        if len(lines) <= 2: 
+            for part in parts:
+                if part: symbols.append(part)
+        else:
+            if parts[0]: symbols.append(parts[0])
+
+    symbols = list(dict.fromkeys(symbols))
+    
     results = []
 
     for symbol in symbols:
