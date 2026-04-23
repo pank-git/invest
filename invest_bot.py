@@ -101,7 +101,7 @@ def get_summary_data(content):
                 "DEATH" if latest['SMA_50'] < latest['SMA_150'] and prev_day['SMA_50'] >= prev_day['SMA_150'] else "-"
         
         hist = df['Close'].tail(3).values
-        hist_str = "/".join([f"{x:.1f}" for x in hist])
+        hist_str = "/".join([f"{x:.2f}" for x in hist])
         price_change = "UP" if latest['Close'] >= prev_day['Close'] else "DOWN"
         
         results.append({
