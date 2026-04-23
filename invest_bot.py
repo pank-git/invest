@@ -232,5 +232,5 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("summary_img", summary_img_command))
     app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_reply))
-    
+    print("Bot is running. Press Ctrl+C to stop.")
     app.run_polling()
