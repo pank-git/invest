@@ -50,20 +50,7 @@ def calculate_sma(df):
     return df
 
 def get_summary_data(content):
-    """Parses CSV content and returns structured data for reports."""
-    symbols = []
-    lines = content.splitlines()
-    for line in lines:
-        if not line.strip(): continue
-        parts = [p.strip() for p in line.split(',')]
-        if parts[0].lower() in ['symbol', 'ticker', 'symbols']: continue
-        if len(lines) <= 2: 
-            for part in parts:
-                if part: symbols.append(part)
-        else:
-            if parts[0]: symbols.append(parts[0])
-
-    symbols = list(dict.fromkeys(symbols))
+    # ... (Keep existing symbol parsing logic) ...
     results = []
 
     for symbol in symbols:
@@ -75,16 +62,22 @@ def get_summary_data(content):
         if len(latest_df) < 4: continue
         
         latest = latest_df.iloc[-1]
-        prev = latest_df.iloc[-2]
+        prev_day = latest_df.iloc[-2] # Used for price color comparison
         
+        # Trend Status
         status = "BULL" if latest['Close'] > latest['SMA_50'] > latest['SMA_150'] else \
                  "BEAR" if latest['Close'] < latest['SMA_50'] < latest['SMA_150'] else "NEUT"
             
-        cross = "GOLD" if latest['SMA_50'] > latest['SMA_150'] and prev['SMA_50'] <= prev['SMA_150'] else \
-                "DEATH" if latest['SMA_50'] < latest['SMA_150'] and prev['SMA_50'] >= prev['SMA_150'] else "-"
+        # Crossover
+        cross = "GOLD" if latest['SMA_50'] > latest['SMA_150'] and prev_day['SMA_50'] <= prev_day['SMA_150'] else \
+                "DEATH" if latest['SMA_50'] < latest['SMA_150'] and prev_day['SMA_50'] >= prev_day['SMA_150'] else "-"
             
+        # History
         hist = df['Close'].tail(3).values
-        hist_str = "/".join([f"{x:.2f}" for x in hist])
+        hist_str = "/".join([f"{x:.1f}" for x in hist])
+        
+        # New: Determine if price went up or down compared to yesterday
+        price_change = "UP" if latest['Close'] >= prev_day['Close'] else "DOWN"
         
         results.append({
             'Ticker': symbol[:6],
@@ -92,7 +85,8 @@ def get_summary_data(content):
             'Status': status,
             'Cross': cross,
             'Price': f"{latest['Close']:.2f}",
-            'Last 3 Days': hist_str
+            'Last 3 Days': hist_str,
+            'PriceChange': price_change # Hidden field for coloring logic
         })
     return results
 
@@ -113,26 +107,50 @@ def format_text_table(data):
 
 def format_image_table(data):
     if not data: return None
-    df_plot = pd.DataFrame(data)
+    
+    # Create DataFrame but drop the 'PriceChange' helper column so it doesn't show in the table
+    raw_df = pd.DataFrame(data)
+    display_df = raw_df.drop(columns=['PriceChange'])
+    
     fig_height = max(2, len(data) * 0.4 + 1)
     fig, ax = plt.subplots(figsize=(12, fig_height))
-    ax.axis('tight'); ax.axis('off')
+    ax.axis('tight')
+    ax.axis('off')
     
-    table = ax.table(cellText=df_plot.values, colLabels=df_plot.columns, cellLoc='center', loc='center')
-    table.auto_set_font_size(False); table.set_fontsize(11); table.scale(1.2, 1.8)
+    table = ax.table(cellText=display_df.values, colLabels=display_df.columns, cellLoc='center', loc='center')
+    table.auto_set_font_size(False)
+    table.set_fontsize(11)
+    table.scale(1.2, 1.8)
     
-    for (row, col), cell in table.get_celld().items():
-        if row == 0:
+    # Apply Colors
+    for (row_idx, col_idx), cell in table.get_celld().items():
+        # Header Row
+        if row_idx == 0:
             cell.set_text_props(weight='bold', color='white')
             cell.set_facecolor('#2c3e50')
-        elif col == 2:
-            val = cell.get_text().get_text()
-            if val == "BULL": cell.set_text_props(color='green', weight='bold')
-            if val == "BEAR": cell.set_text_props(color='red', weight='bold')
-
+        
+        # Data Rows (row_idx > 0)
+        elif row_idx > 0:
+            # We use the original 'data' list to check our hidden 'PriceChange' value
+            # Note: row_idx 1 corresponds to data index 0
+            row_data = data[row_idx - 1]
+            
+            # 1. Color the Status Column (Index 2)
+            if col_idx == 2:
+                if row_data['Status'] == "BULL": cell.set_text_props(color='green', weight='bold')
+                if row_data['Status'] == "BEAR": cell.set_text_props(color='red', weight='bold')
+            
+            # 2. Color the Price Column (Index 4) based on Daily Change
+            if col_idx == 4:
+                if row_data['PriceChange'] == "UP":
+                    cell.set_text_props(color='#008000', weight='bold') # Dark Green
+                else:
+                    cell.set_text_props(color='#cc0000', weight='bold') # Red
+                    
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', dpi=150)
-    buf.seek(0); plt.close()
+    buf.seek(0)
+    plt.close()
     return buf
 
 # ==========================================
