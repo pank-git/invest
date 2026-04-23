@@ -49,58 +49,65 @@ def calculate_sma(df):
     df['SMA_150'] = df['Close'].rolling(window=150).mean()
     return df
 
-def get_summary_data(content):
-    """Parses CSV content and returns structured data for reports."""
+def get_sma_trend(df, sma_col='SMA_50', lookback=10):
+    recent = df[sma_col].dropna().tail(lookback)
+    if len(recent) < 2:
+        return "Insufficient data"
+    
+    x = np.arange(len(recent))
+    slope, _, _, _, _ = linregress(x, recent)
+    price_level = recent.iloc[-1]
+    threshold = 0.001 * price_level
+    
+    if slope > threshold: return "Upward"
+    elif slope < -threshold: return "Downward"
+    else: return "Flat"
+
+def get_symbols_from_csv(filepath):
+    """Robust helper to extract symbols from every row of the CSV."""
+    if not os.path.exists(filepath):
+        return []
     symbols = []
-    lines = content.splitlines()
+    with open(filepath, 'r', encoding='utf-8-sig') as f:
+        lines = f.read().splitlines()
     for line in lines:
         if not line.strip(): continue
         parts = [p.strip() for p in line.split(',')]
         if parts[0].lower() in ['symbol', 'ticker', 'symbols']: continue
-        if len(lines) <= 2: 
+        if len(lines) == 1:
             for part in parts:
                 if part: symbols.append(part)
         else:
             if parts[0]: symbols.append(parts[0])
+    return list(dict.fromkeys(symbols))
 
-    symbols = list(dict.fromkeys(symbols))
-    
+def get_summary_data(content):
+    """Parses CSV content and returns structured data for reports."""
+    symbols = get_symbols_from_csv(CSV_FILE_PATH)
     results = []
-
     for symbol in symbols:
         df, name = get_stock_data(symbol, days=250)
         if df is None: continue
-        
         df = calculate_sma(df)
         latest_df = df.dropna()
         if len(latest_df) < 4: continue
         
         latest = latest_df.iloc[-1]
-        prev_day = latest_df.iloc[-2] # Used for price color comparison
+        prev_day = latest_df.iloc[-2]
         
-        # Trend Status
         status = "BULL" if latest['Close'] > latest['SMA_50'] > latest['SMA_150'] else \
                  "BEAR" if latest['Close'] < latest['SMA_50'] < latest['SMA_150'] else "NEUT"
-            
-        # Crossover
         cross = "GOLD" if latest['SMA_50'] > latest['SMA_150'] and prev_day['SMA_50'] <= prev_day['SMA_150'] else \
                 "DEATH" if latest['SMA_50'] < latest['SMA_150'] and prev_day['SMA_50'] >= prev_day['SMA_150'] else "-"
-            
-        # History
+        
         hist = df['Close'].tail(3).values
         hist_str = "/".join([f"{x:.1f}" for x in hist])
-        
-        # New: Determine if price went up or down compared to yesterday
         price_change = "UP" if latest['Close'] >= prev_day['Close'] else "DOWN"
         
         results.append({
-            'Ticker': symbol[:6],
-            'Name': name,
-            'Status': status,
-            'Cross': cross,
-            'Price': f"{latest['Close']:.2f}",
-            'Last 3 Days': hist_str,
-            'PriceChange': price_change # Hidden field for coloring logic
+            'Ticker': symbol[:6], 'Name': name, 'Status': status,
+            'Cross': cross, 'Price': f"{latest['Close']:.2f}",
+            'Last 3 Days': hist_str, 'PriceChange': price_change
         })
     return results
 
@@ -121,50 +128,52 @@ def format_text_table(data):
 
 def format_image_table(data):
     if not data: return None
-    
-    # Create DataFrame but drop the 'PriceChange' helper column so it doesn't show in the table
     raw_df = pd.DataFrame(data)
     display_df = raw_df.drop(columns=['PriceChange'])
-    
     fig_height = max(2, len(data) * 0.4 + 1)
     fig, ax = plt.subplots(figsize=(12, fig_height))
-    ax.axis('tight')
-    ax.axis('off')
+    ax.axis('tight'); ax.axis('off')
     
     table = ax.table(cellText=display_df.values, colLabels=display_df.columns, cellLoc='center', loc='center')
-    table.auto_set_font_size(False)
-    table.set_fontsize(11)
-    table.scale(1.2, 1.8)
+    table.auto_set_font_size(False); table.set_fontsize(11); table.scale(1.2, 1.8)
     
-    # Apply Colors
     for (row_idx, col_idx), cell in table.get_celld().items():
-        # Header Row
         if row_idx == 0:
-            cell.set_text_props(weight='bold', color='white')
-            cell.set_facecolor('#2c3e50')
-        
-        # Data Rows (row_idx > 0)
+            cell.set_text_props(weight='bold', color='white'); cell.set_facecolor('#2c3e50')
         elif row_idx > 0:
-            # We use the original 'data' list to check our hidden 'PriceChange' value
-            # Note: row_idx 1 corresponds to data index 0
             row_data = data[row_idx - 1]
-            
-            # 1. Color the Status Column (Index 2)
-            if col_idx == 2:
+            if col_idx == 2: # Status
                 if row_data['Status'] == "BULL": cell.set_text_props(color='green', weight='bold')
                 if row_data['Status'] == "BEAR": cell.set_text_props(color='red', weight='bold')
-            
-            # 2. Color the Price Column (Index 4) based on Daily Change
-            if col_idx == 4:
-                if row_data['PriceChange'] == "UP":
-                    cell.set_text_props(color='#008000', weight='bold') # Dark Green
-                else:
-                    cell.set_text_props(color='#cc0000', weight='bold') # Red
-                    
+            if col_idx == 4: # Price
+                p_color = 'green' if row_data['PriceChange'] == "UP" else 'red'
+                cell.set_text_props(color=p_color, weight='bold')
+
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', dpi=150)
-    buf.seek(0)
-    plt.close()
+    buf.seek(0); plt.close()
+    return buf
+
+def plot_price_sma(df, symbol):
+    plt.figure(figsize=(12, 6))
+    plt.plot(df.index, df['Close'], color='black', label='Price', linewidth=1.5)
+    plt.plot(df.index, df['SMA_50'], color='blue', label='SMA 50', linewidth=2)
+    plt.plot(df.index, df['SMA_150'], color='green', label='SMA 150', linewidth=2)
+    
+    df = df.copy()
+    df['SMA_Cross'] = 0
+    df.loc[(df['SMA_50'] > df['SMA_150']) & (df['SMA_50'].shift(1) <= df['SMA_150'].shift(1)), 'SMA_Cross'] = 1 
+    df.loc[(df['SMA_50'] < df['SMA_150']) & (df['SMA_50'].shift(1) >= df['SMA_150'].shift(1)), 'SMA_Cross'] = -1 
+    
+    cross_points = df[df['SMA_Cross'] != 0]
+    for date, row in cross_points.iterrows():
+        direction = 'GOLD' if row['SMA_Cross'] == 1 else 'DEATH'
+        plt.scatter(date, row['SMA_50'], color='red', marker='o', s=80, zorder=5)
+        plt.annotate(direction, xy=(date, row['SMA_50']), xytext=(5, 5), textcoords='offset points', fontsize=8, fontweight='bold', bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.5))
+    
+    plt.title(f'{symbol} Price vs SMAs'); plt.legend(); plt.grid(True, alpha=0.3)
+    plt.xticks(rotation=45); plt.tight_layout()
+    buf = io.BytesIO(); plt.savefig(buf, format='png'); buf.seek(0); plt.close()
     return buf
 
 # ==========================================
@@ -172,91 +181,59 @@ def format_image_table(data):
 # ==========================================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    welcome_text = (
-        "📈 *Stock SMA Bot Commands:*\n\n"
-        "`/analyze AAPL` - Single symbol trend & chart\n"
-        "`/analyze_list` - Select a symbol from your list\n"
-        "`/summary` - View text summary table\n"
-        "`/summary_img` - View visual summary table (Best for mobile)\n"
-        "`/cancel` - Exit selection mode"
-    )
-    await update.message.reply_text(welcome_text, parse_mode='Markdown')
+    await update.message.reply_text("📈 *Stock SMA Bot*\n/analyze [Ticker]\n/analyze_list\n/summary\n/summary_img\n/cancel", parse_mode='Markdown')
+
+async def track_price_vs_sma(symbol):
+    df, name = get_stock_data(symbol)
+    if df is None: return f"No data for {symbol}", None
+    df = calculate_sma(df)
+    latest = df.dropna().iloc[-1]
+    report = f"<b>{name} ({symbol})</b>\nPrice: ${latest['Close']:.2f}\nSMA50: {get_sma_trend(df, 'SMA_50')}\nSMA150: {get_sma_trend(df, 'SMA_150')}"
+    return report, df
+
+async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args: return
+    symbol = context.args[0].upper()
+    report, df = await track_price_vs_sma(symbol)
+    if df is not None:
+        await update.message.reply_text(report, parse_mode='HTML')
+        await update.message.reply_photo(plot_price_sma(df, symbol))
 
 async def summary_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not os.path.exists(CSV_FILE_PATH):
-        await update.message.reply_text("❌ symbols.csv not found.")
-        return
-    await update.message.reply_text("⏳ Generating text summary...")
-    with open(CSV_FILE_PATH, 'r', encoding='utf-8-sig') as f:
-        data = get_summary_data(f.read())
+    data = get_summary_data(None)
     await update.message.reply_text(format_text_table(data), parse_mode='HTML')
 
 async def summary_img_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not os.path.exists(CSV_FILE_PATH):
-        await update.message.reply_text("❌ symbols.csv not found.")
-        return
-    await update.message.reply_text("⏳ Rendering summary image...")
-    with open(CSV_FILE_PATH, 'r', encoding='utf-8-sig') as f:
-        data = get_summary_data(f.read())
-    img_buf = format_image_table(data)
-    if img_buf:
-        await update.message.reply_photo(photo=img_buf, caption="📈 Market Analysis Summary")
+    await update.message.reply_text("⏳ Generating image...")
+    data = get_summary_data(None)
+    img = format_image_table(data)
+    if img: await update.message.reply_photo(img, caption="📈 Market Analysis Summary")
 
 async def analyze_list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not os.path.exists(CSV_FILE_PATH):
-        await update.message.reply_text("❌ symbols.csv not found.")
-        return
-    with open(CSV_FILE_PATH, 'r', encoding='utf-8-sig') as f:
-        lines = f.read().splitlines()
-    
-    symbols = []
-    for line in lines:
-        if not line.strip() or line.split(',')[0].lower() in ['symbol', 'ticker']: continue
-        symbols.append(line.split(',')[0].strip())
-    
-    symbols = list(dict.fromkeys(symbols))
+    symbols = get_symbols_from_csv(CSV_FILE_PATH)
+    if not symbols: return
     context.user_data['symbol_list'] = symbols
-    
-    msg = "📋 *Select a symbol:*\n\n" + "\n".join([f"{i+1}. {s}" for i, s in enumerate(symbols)])
+    msg = "📋 *Select Symbol:*\n" + "\n".join([f"{i+1}. {s}" for i, s in enumerate(symbols)])
     await update.message.reply_text(msg, parse_mode='Markdown')
 
 async def handle_user_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'symbol_list' not in context.user_data: return
     text = update.message.text.strip()
     symbols = context.user_data['symbol_list']
-    
     if text.isdigit() and 1 <= int(text) <= len(symbols):
         symbol = symbols[int(text) - 1]
         del context.user_data['symbol_list']
-        await analyze_symbol(update, symbol)
-    else:
-        await update.message.reply_text("⚠️ Invalid selection. Use /cancel to stop.")
-
-async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Usage: `/analyze AAPL`", parse_mode='Markdown')
-        return
-    await analyze_symbol(update, context.args[0].upper())
-
-async def analyze_symbol(update, symbol):
-    await update.message.reply_text(f"⏳ Analyzing {symbol}...")
-    from invest_bot import track_price_vs_sma, plot_price_sma # Ensure helpers are accessible
-    # Use existing helper logic (track_price_vs_sma and plot_price_sma)
-    # ... logic to return report and photo ...
+        report, df = await track_price_vs_sma(symbol)
+        await update.message.reply_text(report, parse_mode='HTML')
+        await update.message.reply_photo(plot_price_sma(df, symbol))
 
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'symbol_list' in context.user_data:
-        del context.user_data['symbol_list']
-        await update.message.reply_text("Action canceled.")
-
-# ==========================================
-# Main
-# ==========================================
+    context.user_data.pop('symbol_list', None)
+    await update.message.reply_text("Canceled.")
 
 if __name__ == "__main__":
     BOT_TOKEN = os.getenv("PANKINVEST_BOT_TOKEN")
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("analyze", analyze_command))
     app.add_handler(CommandHandler("analyze_list", analyze_list_command))
